@@ -42,6 +42,7 @@ python src/enrich.py
 python src/transform.py
 python src/classify_food_style.py
 python src/apply_overrides.py
+python src/retry_food_errors.py
 python src/classify_vibe.py
 python src/recommender.py
 ```
