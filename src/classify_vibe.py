@@ -12,13 +12,13 @@ from openai import OpenAI
 # FILES
 # =========================================================
 
-INPUT_FILE = Path(
-    "data/processed/places_with_vibe.csv"
-)
+VIBE_FILE = Path("data/processed/places_with_vibe.csv")
+FOOD_FILE = Path("data/processed/places_with_food_classification_final.csv")
 
-OUTPUT_FILE = Path(
-    "data/processed/places_with_vibe.csv"
-)
+# Resume if a previous run exists; otherwise start from the food classification
+INPUT_FILE = VIBE_FILE if VIBE_FILE.exists() else FOOD_FILE
+
+OUTPUT_FILE = VIBE_FILE
 
 REVIEW_FILE = Path(
     "data/processed/vibe_to_review.csv"

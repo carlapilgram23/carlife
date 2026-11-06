@@ -31,9 +31,12 @@ Recommender
 
 **One rule from the start:** AI only decides on its own when it's confident. Everything else goes to a review file, and I correct it by hand (`data/manual/food_classification_overrides.csv`).
 
+
+
 ## Run it
 
 ```bash
+pip install -r requirements.txt
 python src/clean.py
 python src/enrich.py
 python src/transform.py
