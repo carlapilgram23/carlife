@@ -1,130 +1,65 @@
 # carlife
-Exploring what AI can infer about me from 956 Google Maps saves and turning those insights into a personalized recommendation engine.
+**places for every plan**
 
-# 956 Places 🗺️
+I have over 1,000 places saved on Google Maps: restaurants, cafés, bars, museums, little shops. And I never remember where I wanted to go.
 
-## What can AI learn about me from the places I save?
+carlife turns those saved places into recommendations. Instead of googling "restaurants in la Roma", I give it a plan (*la Roma, with friends, something casual*) and it ranks my own saved places.
 
-Over the years, I have saved **956 places on Google Maps**: restaurants, coffee shops, bars, stores, museums, and places across cities I've lived in, visited, or want to explore.
+## Status
 
-Individually, each save says very little.
+| Step | What it does | Status |
+|---|---|---|
+| Clean | Combines my Google Maps Takeout lists into one dataset (956 places in this version) | ✅ Done |
+| Enrich | Adds location, neighborhood, type, price and rating with the Google Places API | ✅ Done |
+| Categorize | Groups Google place types into simple categories (restaurant, café, bar…) | ✅ Done |
+| Food style | Rules from Google types first; AI with web search for the rest; manual overrides on top | ✅ Done |
+| Vibe | AI classifies each restaurant's vibe (cozy, lively, casual, elegant…) | 🟡 In progress |
+| Recommender | Filters by neighborhood and cuisine, then ranks by occasion (friends, date night…) and how casual, lively or formal I want it | 🟡 First version |
+| What AI can guess about me | Give AI only my saved places and compare its guesses with reality | ⏳ Next |
 
-Together, they create a **digital footprint**.
-
-This project asks:
-
-> **How much can AI infer about me from my Google Maps saves alone?**
-
-## 📍 The Data
-
-The project starts with my real Google Maps Takeout data:
-
-| List      |  Places |
-| :-------- | ------: |
-| CDMX      |      85 |
-| London    |     218 |
-| Wanna go  |     653 |
-| **Total** | **956** |
-
-The raw data is included in this repository.
-
-I enrich each place with information such as:
-
-* Location and neighborhood
-* Category and cuisine
-* Price level and rating
-* Reviews and recurring themes
-* Atmosphere and occasion
-* Semantic and behavioral tags
-
-## 🏗️ The Pipeline
+## How it works
 
 ```text
-956 Google Maps Saves
-          ↓
-     Clean + Enrich
-          ↓
-   Review Analysis
-          ↓
-  Feature Engineering
-          ↓
- Master Places Dataset
-          ↓
- ┌────────┼─────────┐
- ↓        ↓         ↓
-Maps   Clusters    AI
- ↓        ↓      Inference
- └────────┼─────────┘
-          ↓
-     Taste Profile
-          ↓
- Recommendation Engine
+Google Maps saves
+      ↓
+Clean + enrich (Google Places API)
+      ↓
+Classify food style and vibe (rules → AI → my review)
+      ↓
+Recommender
 ```
 
-## 🧠 The Experiment
+**One rule from the start:** AI only decides on its own when it's confident. Everything else goes to a review file, and I correct it by hand (`data/manual/food_classification_overrides.csv`).
 
-Once the dataset is built, I give AI **only the patterns contained in my saved places**.
+## Run it
 
-No CV. No biography. No social media.
-
-Can it infer:
-
-* Where I've lived and traveled?
-* What food I like?
-* Which neighborhoods I gravitate toward?
-* What price points and experiences I prefer?
-* What my lifestyle might look like?
-* What kind of traveler I am?
-
-I then compare those inferences with reality to measure **what AI gets right, what it gets wrong, and why**.
-
-## 🔎 Discovering My Taste
-
-Using clustering, embeddings, NLP, and geospatial analysis, I explore whether algorithms can discover patterns in my taste **without me explicitly defining them**.
-
-Do my saved places naturally form groups around certain cuisines, neighborhoods, price points, occasions, or experiences?
-
-And how geographically narrow is **my version of a city**?
-
-## 🎯 The 956 Place Problem
-
-There is also a practical problem:
-
-> **I have almost 1,000 saved places and can never remember where I wanted to go.**
-
-So I use the same data to build a personalized recommendation engine.
-
-Instead of:
-
-> *What's a good restaurant in Mexico City?*
-
-I want to ask:
-
-> *Dinner in Roma or Juárez, casual but nice, good wine, not too expensive, and somewhere I've saved but haven't tried.*
-
-The system uses my own taste patterns to rank the places that make the most sense.
-
-## 🚀 From Data to Carlife
-
-The same places intelligence can help power **Carlife**, making it easier to turn hundreds of saved locations into curated city guides.
-
-```
-Google Maps → Places Intelligence → Recommendations → Carlife Guides
+```bash
+python src/clean.py
+python src/enrich.py
+python src/transform.py
+python src/classify_food_style.py
+python src/apply_overrides.py
+python src/classify_vibe.py
+python src/recommender.py
 ```
 
-AI helps me organize and discover.
+API keys go in a `.env` file (not included):
 
-**I decide what is worth recommending.**
+```text
+GOOGLE_MAPS_API_KEY=...
+OPENAI_API_KEY=...
+```
 
-## 🛠️ Tech
+## Tech
+`Python` · `pandas` · `Google Places API` · `OpenAI API (web search, structured outputs)`
 
-`Python` · `pandas` · `scikit-learn` · `NLP` · `Embeddings` · `Clustering` · `GeoPandas` · `LLMs` · `Recommendation Systems`
+## The bigger question
+A single saved place means almost nothing. Hundreds of them probably say more about us than we think. That's the next part of this project.
 
-## 💭 The Bigger Question
+## The experiment (next)
 
-A single Google Maps save means almost nothing.
+Once the dataset is complete, I'll give AI **only my saved places**. No CV, no bio, no social media.
 
-Hundreds of them might reveal much more.
+Can it guess where I've lived, what food I like, which neighborhoods I gravitate toward, or what kind of traveler I am?
 
-> **How much do our seemingly insignificant digital traces reveal about us?**
-
+Then I'll compare its guesses with reality: what it gets right, what it gets wrong, and why.
