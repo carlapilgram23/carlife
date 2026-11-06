@@ -13,28 +13,35 @@ from openai import OpenAI
 # =========================================================
 
 INPUT_FILE = Path("data/processed/places_final.csv")
-OUTPUT_FILE = Path("data/processed/places_with_food_style.csv")
-REVIEW_FILE = Path("data/processed/food_style_to_review.csv")
 
-# Start small while testing
-TEST_LIMIT = 10
+OUTPUT_FILE = Path(
+    "data/processed/places_with_food_classification.csv"
+)
 
-# Only accept classifications above this threshold automatically
+REVIEW_FILE = Path(
+    "data/processed/food_classification_to_review.csv"
+)
+
+# Keep at 10 while testing.
+# Change to None when ready for the full run.
+TEST_LIMIT = None
+
 AUTO_ACCEPT_THRESHOLD = 0.85
+WEB_SEARCH_THRESHOLD = 0.85
 
 
 # =========================================================
 # API
 # =========================================================
 
-load_dotenv()
+load_dotenv(override=True)
 
 API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not API_KEY:
     raise ValueError(
         "OPENAI_API_KEY was not found. "
-        "Add it to your .env file."
+        "Check your .env file."
     )
 
 client = OpenAI(
@@ -43,11 +50,91 @@ client = OpenAI(
 
 
 # =========================================================
-# EXISTING GOOGLE-BASED FOOD STYLE RULES
+# CONTROLLED CUISINE TAXONOMY
 # =========================================================
 
-FOOD_STYLE_MAP = {
-    # Cuisines
+ALLOWED_CUISINES = [
+    "Mexican",
+    "Italian",
+    "Japanese",
+    "French",
+    "British",
+    "Spanish",
+    "Mediterranean",
+    "Chinese",
+    "Korean",
+    "Indian",
+    "Thai",
+    "Greek",
+    "Lebanese",
+    "Middle Eastern",
+    "American",
+    "Colombian",
+    "Peruvian",
+    "Brazilian",
+    "Caribbean",
+    "Taiwanese",
+    "Vietnamese",
+    "Turkish",
+    "Polish",
+    "German",
+    "Persian",
+    "Filipino",
+    "Australian",
+    "Austrian",
+    "Eastern European",
+    "Latin American",
+    "South American",
+    "Asian",
+    "European",
+    "Fusion",
+    "Other",
+    "Unknown",
+]
+
+
+# =========================================================
+# CONTROLLED SPECIALTY TAXONOMY
+# =========================================================
+
+ALLOWED_SPECIALTIES = [
+    "Pizza",
+    "Tacos",
+    "Sushi",
+    "Bagels",
+    "Seafood",
+    "Oysters",
+    "Burgers",
+    "Steak",
+    "Sandwiches",
+    "Ramen",
+    "Dumplings",
+    "Noodles",
+    "BBQ",
+    "Chicken",
+    "Falafel",
+    "Fish & Chips",
+    "Deli",
+    "Breakfast",
+    "Brunch",
+    "Fine Dining",
+    "Bistro",
+    "Vegetarian",
+    "Vegan",
+    "Fast Food",
+    "Takeaway",
+    "Pasta",
+    "Ceviche",
+    "Pastries",
+    "Unknown",
+]
+
+
+# =========================================================
+# GOOGLE TYPES → CUISINE
+# =========================================================
+
+CUISINE_MAP = {
     "italian_restaurant": "Italian",
     "japanese_restaurant": "Japanese",
     "mexican_restaurant": "Mexican",
@@ -64,11 +151,9 @@ FOOD_STYLE_MAP = {
     "lebanese_restaurant": "Lebanese",
     "australian_restaurant": "Australian",
     "middle_eastern_restaurant": "Middle Eastern",
-    "basque_restaurant": "Basque",
     "latin_american_restaurant": "Latin American",
     "turkish_restaurant": "Turkish",
     "korean_restaurant": "Korean",
-    "cantonese_restaurant": "Cantonese",
     "austrian_restaurant": "Austrian",
     "filipino_restaurant": "Filipino",
     "eastern_european_restaurant": "Eastern European",
@@ -78,23 +163,8 @@ FOOD_STYLE_MAP = {
     "german_restaurant": "German",
     "vietnamese_restaurant": "Vietnamese",
     "brazilian_restaurant": "Brazilian",
-    "cajun_restaurant": "Cajun",
-    "south_indian_restaurant": "South Indian",
-    "caribbean_restaurant": "Caribbean",
-    "south_american_restaurant": "South American",
     "taiwanese_restaurant": "Taiwanese",
 
-    # Food styles
-    "seafood_restaurant": "Seafood",
-    "oyster_bar_restaurant": "Seafood",
-    "steak_house": "Steakhouse",
-    "vegetarian_restaurant": "Vegetarian",
-    "vegan_restaurant": "Vegan",
-    "halal_restaurant": "Halal",
-    "barbecue_restaurant": "BBQ",
-    "chicken_restaurant": "Chicken",
-
-    # Strong format → cuisine/style signals
     "taco_restaurant": "Mexican",
     "sushi_restaurant": "Japanese",
     "ramen_restaurant": "Japanese",
@@ -107,82 +177,313 @@ FOOD_STYLE_MAP = {
 }
 
 
-def get_food_styles(types):
+# =========================================================
+# GOOGLE TYPES → SPECIALTY
+# =========================================================
 
+SPECIALTY_MAP = {
+    "seafood_restaurant": "Seafood",
+    "oyster_bar_restaurant": "Oysters",
+    "steak_house": "Steak",
+    "barbecue_restaurant": "BBQ",
+    "chicken_restaurant": "Chicken",
+
+    "taco_restaurant": "Tacos",
+    "sushi_restaurant": "Sushi",
+    "ramen_restaurant": "Ramen",
+    "pizza_restaurant": "Pizza",
+    "hamburger_restaurant": "Burgers",
+    "falafel_restaurant": "Falafel",
+    "fish_and_chips_restaurant": "Fish & Chips",
+
+    "bagel_shop": "Bagels",
+    "sandwich_shop": "Sandwiches",
+    "dumpling_restaurant": "Dumplings",
+    "noodle_shop": "Noodles",
+    "deli": "Deli",
+    "bistro": "Bistro",
+
+    "vegetarian_restaurant": "Vegetarian",
+    "vegan_restaurant": "Vegan",
+
+    "breakfast_restaurant": "Breakfast",
+    "brunch_restaurant": "Brunch",
+    "fine_dining_restaurant": "Fine Dining",
+    "fast_food_restaurant": "Fast Food",
+    "meal_takeaway": "Takeaway",
+}
+
+
+# =========================================================
+# HELPERS
+# =========================================================
+
+def split_types(types):
     if pd.isna(types):
-        return None
+        return []
 
-    place_types = types.split(", ")
-
-    styles = [
-        FOOD_STYLE_MAP[t]
-        for t in place_types
-        if t in FOOD_STYLE_MAP
+    return [
+        item.strip()
+        for item in types.split(",")
     ]
 
-    if not styles:
+
+def get_google_matches(types, mapping):
+    place_types = split_types(types)
+
+    values = [
+        mapping[t]
+        for t in place_types
+        if t in mapping
+    ]
+
+    return list(
+        dict.fromkeys(values)
+    )
+
+
+def get_primary_google_value(types, mapping):
+    values = get_google_matches(
+        types,
+        mapping
+    )
+
+    if not values:
         return None
 
-    return ", ".join(
-        dict.fromkeys(styles)
+    return values[0]
+
+
+def get_google_detail(types, mapping):
+    values = get_google_matches(
+        types,
+        mapping
+    )
+
+    if not values:
+        return None
+
+    return ", ".join(values)
+
+
+def get_google_cuisine(types):
+    return get_primary_google_value(
+        types,
+        CUISINE_MAP
+    )
+
+
+def get_google_cuisine_detail(types):
+    return get_google_detail(
+        types,
+        CUISINE_MAP
+    )
+
+
+def get_google_specialty(types):
+    return get_primary_google_value(
+        types,
+        SPECIALTY_MAP
+    )
+
+
+def get_google_specialty_detail(types):
+    return get_google_detail(
+        types,
+        SPECIALTY_MAP
     )
 
 
 # =========================================================
-# PROMPT
+# STRUCTURED OUTPUT SCHEMA
 # =========================================================
 
-def build_prompt(row):
+FOOD_SCHEMA = {
+    "type": "json_schema",
+    "name": "restaurant_food_classification",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+
+            "cuisine": {
+                "type": "string",
+                "enum": ALLOWED_CUISINES,
+            },
+
+            "cuisine_detail": {
+                "type": "string"
+            },
+
+            "specialty": {
+                "type": "string",
+                "enum": ALLOWED_SPECIALTIES,
+            },
+
+            "specialty_detail": {
+                "type": "string"
+            },
+
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+            },
+
+            "evidence": {
+                "type": "string"
+            }
+        },
+
+        "required": [
+            "cuisine",
+            "cuisine_detail",
+            "specialty",
+            "specialty_detail",
+            "confidence",
+            "evidence"
+        ],
+
+        "additionalProperties": False
+    }
+}
+
+
+# =========================================================
+# METADATA PROMPT
+# =========================================================
+
+def build_metadata_prompt(row):
+
+    cuisines = ", ".join(
+        ALLOWED_CUISINES
+    )
+
+    specialties = ", ".join(
+        ALLOWED_SPECIALTIES
+    )
 
     return f"""
-Classify the likely food style of this restaurant.
+You are classifying food information for a restaurant dataset.
 
-Use ONLY the evidence provided below.
+Every record has ALREADY been classified as a Restaurant.
 
-Restaurant:
-Name: {row.get("title")}
-City: {row.get("city")}
-Neighborhood: {row.get("neighborhood")}
-Primary Google type: {row.get("primary_type")}
-Google types: {row.get("google_types")}
-Price level: {row.get("price_level")}
-Google rating: {row.get("google_rating")}
-Number of reviews: {row.get("review_count")}
+Your task is to identify:
 
-The food_style should describe the restaurant's cuisine or dominant food concept.
+1. cuisine
+2. cuisine_detail
+3. specialty
+4. specialty_detail
 
-Good examples:
-Italian
-Mexican
-Japanese
-Seafood
-Steakhouse
-Middle Eastern
+Restaurant metadata:
+
+Name:
+{row.get("title")}
+
+Google name:
+{row.get("google_name")}
+
+City:
+{row.get("city")}
+
+Neighborhood:
+{row.get("neighborhood")}
+
+Full address:
+{row.get("formatted_address")}
+
+Primary Google type:
+{row.get("primary_type")}
+
+Google types:
+{row.get("google_types")}
+
+Price level:
+{row.get("price_level")}
+
+Google rating:
+{row.get("google_rating")}
+
+Review count:
+{row.get("review_count")}
+
+
+CUISINE
+
+Cuisine MUST be exactly one of:
+
+{cuisines}
+
+Cuisine should be one broad analytical category.
+
+Examples:
+
+Italian-American pizza
+→ cuisine = Italian
+→ cuisine_detail = Italian-American / New York-style
+
 Contemporary Mexican
-Modern European
-British
-Mediterranean
-Tacos
-Burgers
-Sandwiches
-Fusion
+→ cuisine = Mexican
+→ cuisine_detail = Contemporary Mexican
 
-Rules:
+Sinaloan food with Asian influences
+→ cuisine = Fusion
+→ cuisine_detail = Sinaloan-Asian seafood fusion
 
-1. Do not invent a cuisine when there is not enough evidence.
-2. Names can be evidence when they strongly indicate a cuisine or concept.
-3. City and neighborhood are context, not proof of cuisine.
-4. If uncertain, use "Unknown".
-5. Confidence must be between 0 and 1.
-6. Evidence should be brief and explain exactly why the classification was made.
+New York Jewish deli
+→ cuisine = American
+→ cuisine_detail = New York-style Jewish deli
+
+
+SPECIALTY
+
+Specialty MUST be exactly one of:
+
+{specialties}
+
+Specialty should be one clean analytical category.
+
+Examples:
+
+New York-style pizza by the slice
+→ specialty = Pizza
+→ specialty_detail = New York-style thin-crust pizza by the slice
+
+Wood-fired Neapolitan pizza
+→ specialty = Pizza
+→ specialty_detail = Neapolitan wood-fired pizza
+
+Seafood restaurant known for ceviches
+→ specialty = Seafood
+→ specialty_detail = Ceviches, oysters and grilled seafood
+
+Bagel shop with lox and pastrami
+→ specialty = Bagels
+→ specialty_detail = Bagels, lox and pastrami sandwiches
+
+
+RULES
+
+1. These places are already restaurants.
+2. Do not classify establishment type.
+3. cuisine must be exactly one controlled category.
+4. specialty must be exactly one controlled category.
+5. cuisine_detail may be descriptive.
+6. specialty_detail may be descriptive.
+7. Do not infer cuisine from city or neighborhood alone.
+8. Google types are stronger evidence than restaurant names.
+9. If cuisine is unsupported, return Unknown.
+10. If specialty is unsupported, return Unknown.
+11. Confidence must reflect actual evidence.
+12. It is better to return Unknown than invent information.
 """
 
 
 # =========================================================
-# AI CLASSIFICATION
+# METADATA CLASSIFICATION
 # =========================================================
 
-def classify_with_ai(row):
+def classify_with_metadata(row):
 
     response = client.responses.create(
         model="gpt-5-mini",
@@ -191,51 +492,213 @@ def classify_with_ai(row):
             {
                 "role": "system",
                 "content": (
-                    "You are classifying restaurant metadata "
-                    "for a data science project. "
-                    "Be conservative. Never guess without evidence."
+                    "Classify restaurant food metadata conservatively. "
+                    "Never invent unsupported information."
                 ),
             },
             {
                 "role": "user",
-                "content": build_prompt(row),
+                "content": build_metadata_prompt(row),
             },
         ],
 
         text={
-            "format": {
-                "type": "json_schema",
-                "name": "food_style_classification",
-                "strict": True,
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "food_style": {
-                            "type": "string"
-                        },
-                        "confidence": {
-                            "type": "number"
-                        },
-                        "evidence": {
-                            "type": "string"
-                        }
-                    },
-                    "required": [
-                        "food_style",
-                        "confidence",
-                        "evidence"
-                    ],
-                    "additionalProperties": False
-                }
-            }
+            "format": FOOD_SCHEMA
         }
     )
 
-    result = json.loads(
+    return json.loads(
         response.output_text
     )
 
-    return result
+
+# =========================================================
+# WEB SEARCH PROMPT
+# =========================================================
+
+def build_web_prompt(row):
+
+    cuisines = ", ".join(
+        ALLOWED_CUISINES
+    )
+
+    specialties = ", ".join(
+        ALLOWED_SPECIALTIES
+    )
+
+    return f"""
+Research the EXACT restaurant below using web search.
+
+The Google identity and location information are provided
+to disambiguate the establishment.
+
+Restaurant:
+
+Original title:
+{row.get("title")}
+
+Google name:
+{row.get("google_name")}
+
+City:
+{row.get("city")}
+
+Neighborhood:
+{row.get("neighborhood")}
+
+Full address:
+{row.get("formatted_address")}
+
+Google Maps URL:
+{row.get("google_maps_uri")}
+
+Original saved Google Maps URL:
+{row.get("url")}
+
+Google Place ID:
+{row.get("google_place_id")}
+
+Google types:
+{row.get("google_types")}
+
+
+FIRST IDENTIFY THE EXACT ESTABLISHMENT.
+
+Prefer:
+
+1. Official restaurant website
+2. Official menu
+3. Official social pages
+4. Reputable restaurant guides
+5. Reputable editorial coverage
+
+
+CUISINE
+
+Cuisine MUST be exactly one of:
+
+{cuisines}
+
+
+SPECIALTY
+
+Specialty MUST be exactly one of:
+
+{specialties}
+
+
+Use cuisine_detail and specialty_detail
+to preserve richer information.
+
+Examples:
+
+cuisine = Colombian
+cuisine_detail = Contemporary coastal Colombian / Caribbean
+specialty = Seafood
+specialty_detail = Ceviches, grilled fish and Caribbean seafood
+
+cuisine = Italian
+cuisine_detail = Italian-American / New York-style
+specialty = Pizza
+specialty_detail = Thin, foldable New York-style pizza by the slice
+
+cuisine = Mexican
+cuisine_detail = Contemporary Mexican, farm-to-table
+specialty = Fine Dining
+specialty_detail = Seasonal interpretations of regional Mexican dishes
+
+cuisine = Fusion
+cuisine_detail = Sinaloan-Asian seafood fusion
+specialty = Seafood
+specialty_detail = Aguachiles, ceviches and Asian-inspired seafood dishes
+
+
+RULES
+
+1. Identify the exact establishment first.
+2. Do not infer cuisine from location alone.
+3. Prefer first-party information.
+4. cuisine must be exactly one controlled category.
+5. specialty must be exactly one controlled category.
+6. cuisine_detail may be descriptive.
+7. specialty_detail may be descriptive.
+8. If exact identity cannot be confirmed, return Unknown.
+9. Confidence reflects both identity and classification confidence.
+10. Evidence should briefly explain the public information used.
+"""
+
+
+# =========================================================
+# WEB CLASSIFICATION
+# =========================================================
+
+def classify_with_web(row):
+
+    response = client.responses.create(
+        model="gpt-5-mini",
+
+        tools=[
+            {
+                "type": "web_search",
+                "search_context_size": "low",
+            }
+        ],
+
+        tool_choice="auto",
+
+        input=[
+            {
+                "role": "system",
+                "content": (
+                    "Research the exact restaurant before classifying it. "
+                    "Prefer official websites and menus. "
+                    "Be conservative about entity matching."
+                ),
+            },
+            {
+                "role": "user",
+                "content": build_web_prompt(row),
+            },
+        ],
+
+        text={
+            "format": FOOD_SCHEMA
+        }
+    )
+
+    return json.loads(
+        response.output_text
+    )
+
+
+# =========================================================
+# SHOULD WEB SEARCH RUN?
+# =========================================================
+
+def needs_web_search(result):
+
+    cuisine = (
+        result.get("cuisine")
+        or ""
+    ).strip()
+
+    specialty = (
+        result.get("specialty")
+        or ""
+    ).strip()
+
+    confidence = float(
+        result.get(
+            "confidence",
+            0
+        )
+    )
+
+    return (
+        confidence < WEB_SEARCH_THRESHOLD
+        or cuisine == "Unknown"
+        or specialty == "Unknown"
+    )
 
 
 # =========================================================
@@ -248,35 +711,98 @@ def load_places():
         INPUT_FILE
     )
 
-    # Create Google-derived food style first
-    places["food_style"] = places[
+    # -----------------------------------------------------
+    # GOOGLE CUISINE
+    # -----------------------------------------------------
+
+    places["cuisine"] = places[
         "google_types"
-    ].apply(get_food_styles)
+    ].apply(
+        get_google_cuisine
+    )
 
-    places["food_style_source"] = None
-    places["food_style_confidence"] = None
-    places["food_style_evidence"] = None
+    places["cuisine_detail"] = places[
+        "google_types"
+    ].apply(
+        get_google_cuisine_detail
+    )
 
-    google_mask = places[
-        "food_style"
-    ].notna()
+    # -----------------------------------------------------
+    # GOOGLE SPECIALTY
+    # -----------------------------------------------------
+
+    places["specialty"] = places[
+        "google_types"
+    ].apply(
+        get_google_specialty
+    )
+
+    places["specialty_detail"] = places[
+        "google_types"
+    ].apply(
+        get_google_specialty_detail
+    )
+
+    # -----------------------------------------------------
+    # PROVENANCE
+    # -----------------------------------------------------
+
+    places[
+        "food_classification_source"
+    ] = None
+
+    places[
+        "food_classification_confidence"
+    ] = None
+
+    places[
+        "food_classification_evidence"
+    ] = None
+
+    google_mask = (
+        places["cuisine"].notna()
+        | places["specialty"].notna()
+    )
 
     places.loc[
         google_mask,
-        "food_style_source"
+        "food_classification_source"
     ] = "GOOGLE_TYPES"
 
     places.loc[
         google_mask,
-        "food_style_confidence"
+        "food_classification_confidence"
     ] = 1.0
 
     places.loc[
         google_mask,
-        "food_style_evidence"
-    ] = "Derived from Google Places types."
+        "food_classification_evidence"
+    ] = (
+        "Derived directly from Google Places types."
+    )
 
     return places
+
+
+# =========================================================
+# RESTAURANTS THAT NEED AI
+# =========================================================
+
+def get_missing_restaurants(places):
+
+    restaurant_mask = (
+        places["category"]
+        == "Restaurant"
+    )
+
+    cuisine_missing = (
+        places["cuisine"].isna()
+    )
+
+    return places[
+        restaurant_mask
+        & cuisine_missing
+    ].copy()
 
 
 # =========================================================
@@ -285,29 +811,26 @@ def load_places():
 
 def classify_missing(places):
 
-    mask = (
-        (places["category"] == "Restaurant")
-        & places["food_style"].isna()
+    missing = get_missing_restaurants(
+        places
     )
-
-    missing = places[
-        mask
-    ].copy()
 
     print(
         f"Restaurants requiring AI classification: "
         f"{len(missing)}"
     )
 
-    # Test on only 10 first
-    if TEST_LIMIT:
+    if TEST_LIMIT is not None:
         missing = missing.head(
             TEST_LIMIT
         )
 
     print(
-        f"Processing now: {len(missing)}\n"
+        f"Processing now: "
+        f"{len(missing)}\n"
     )
+
+    total = len(missing)
 
     for counter, (index, row) in enumerate(
         missing.iterrows(),
@@ -315,63 +838,189 @@ def classify_missing(places):
     ):
 
         print(
-            f"[{counter}/{len(missing)}] "
+            f"[{counter}/{total}] "
             f"{row['title']}"
         )
 
         try:
 
-            result = classify_with_ai(
+            # =============================================
+            # STAGE 1 — METADATA
+            # =============================================
+
+            metadata_result = classify_with_metadata(
                 row
             )
 
-            food_style = result[
-                "food_style"
-            ]
+            final_result = metadata_result
+            source = "AI_METADATA"
 
-            confidence = float(
-                result["confidence"]
+            print(
+                "  Metadata → "
+                f"{metadata_result['cuisine']} | "
+                f"{metadata_result['cuisine_detail']} | "
+                f"{metadata_result['specialty']} | "
+                f"{metadata_result['specialty_detail']} | "
+                f"{metadata_result['confidence']:.2f}"
             )
 
-            evidence = result[
-                "evidence"
-            ]
+            # =============================================
+            # STAGE 2 — WEB
+            # =============================================
 
-            # Unknown is never automatically accepted
-            if (
-                food_style.lower() == "unknown"
-                or confidence < AUTO_ACCEPT_THRESHOLD
+            if needs_web_search(
+                metadata_result
             ):
 
-                source = "AI_REVIEW"
+                print(
+                    "  Searching web..."
+                )
+
+                web_result = classify_with_web(
+                    row
+                )
+
+                final_result = web_result
+                source = "AI_WEB"
+
+                print(
+                    "  Web → "
+                    f"{web_result['cuisine']} | "
+                    f"{web_result['cuisine_detail']} | "
+                    f"{web_result['specialty']} | "
+                    f"{web_result['specialty_detail']} | "
+                    f"{web_result['confidence']:.2f}"
+                )
+
+            # =============================================
+            # FINAL RESULT
+            # =============================================
+
+            cuisine = final_result[
+                "cuisine"
+            ].strip()
+
+            cuisine_detail = final_result[
+                "cuisine_detail"
+            ].strip()
+
+            specialty = final_result[
+                "specialty"
+            ].strip()
+
+            specialty_detail = final_result[
+                "specialty_detail"
+            ].strip()
+
+            confidence = float(
+                final_result[
+                    "confidence"
+                ]
+            )
+
+            evidence = final_result[
+                "evidence"
+            ].strip()
+
+            # -------------------------------------------------
+            # CUISINE
+            # -------------------------------------------------
+
+            if cuisine != "Unknown":
+
+                places.at[
+                    index,
+                    "cuisine"
+                ] = cuisine
+
+            # -------------------------------------------------
+            # CUISINE DETAIL
+            # -------------------------------------------------
+
+            if (
+                cuisine_detail
+                and cuisine_detail.lower()
+                != "unknown"
+            ):
+
+                places.at[
+                    index,
+                    "cuisine_detail"
+                ] = cuisine_detail
+
+            # -------------------------------------------------
+            # SPECIALTY
+            # -------------------------------------------------
+
+            if specialty != "Unknown":
+
+                places.at[
+                    index,
+                    "specialty"
+                ] = specialty
+
+            # -------------------------------------------------
+            # SPECIALTY DETAIL
+            # -------------------------------------------------
+
+            if (
+                specialty_detail
+                and specialty_detail.lower()
+                != "unknown"
+            ):
+
+                places.at[
+                    index,
+                    "specialty_detail"
+                ] = specialty_detail
+
+            # -------------------------------------------------
+            # QA
+            # -------------------------------------------------
+
+            if (
+                confidence
+                < AUTO_ACCEPT_THRESHOLD
+                or cuisine == "Unknown"
+            ):
+
+                final_source = (
+                    f"{source}_REVIEW"
+                )
 
             else:
 
-                source = "AI_METADATA"
+                final_source = source
 
             places.at[
                 index,
-                "food_style"
-            ] = food_style
+                "food_classification_source"
+            ] = final_source
 
             places.at[
                 index,
-                "food_style_confidence"
+                "food_classification_confidence"
             ] = confidence
 
             places.at[
                 index,
-                "food_style_evidence"
+                "food_classification_evidence"
             ] = evidence
 
-            places.at[
-                index,
-                "food_style_source"
-            ] = source
+            # Save progress after every classification
+            places.to_csv(
+                OUTPUT_FILE,
+                index=False
+            )
 
             print(
-                f"  → {food_style} "
-                f"({confidence:.2f})"
+                f"  FINAL → "
+                f"Cuisine: {cuisine} | "
+                f"Detail: {cuisine_detail} | "
+                f"Specialty: {specialty} | "
+                f"Specialty detail: {specialty_detail} | "
+                f"{confidence:.2f} | "
+                f"{final_source}"
             )
 
         except Exception as error:
@@ -382,7 +1031,7 @@ def classify_missing(places):
 
             places.at[
                 index,
-                "food_style_source"
+                "food_classification_source"
             ] = "AI_ERROR"
 
         time.sleep(
@@ -403,13 +1052,19 @@ def save_results(places):
         index=False
     )
 
-    review = places[
+    review_mask = (
         places[
-            "food_style_source"
-        ].isin([
-            "AI_REVIEW",
-            "AI_ERROR"
-        ])
+            "food_classification_source"
+        ]
+        .fillna("")
+        .str.contains(
+            "REVIEW|ERROR",
+            regex=True
+        )
+    )
+
+    review = places[
+        review_mask
     ].copy()
 
     review.to_csv(
@@ -422,7 +1077,8 @@ def save_results(places):
     )
 
     print(
-        f"Review cases → {REVIEW_FILE}"
+        f"Review cases → "
+        f"{REVIEW_FILE}"
     )
 
 
@@ -435,14 +1091,14 @@ def print_summary(places):
     restaurants = places[
         places["category"]
         == "Restaurant"
-    ]
+    ].copy()
 
     print(
         "\n=============================="
     )
 
     print(
-        "FOOD STYLE SUMMARY"
+        "FOOD CLASSIFICATION SUMMARY"
     )
 
     print(
@@ -460,27 +1116,62 @@ def print_summary(places):
 
     print(
         restaurants[
-            "food_style_source"
+            "food_classification_source"
         ].value_counts(
             dropna=False
         )
     )
 
     print(
-        "\nCoverage:"
+        "\nCuisine coverage:"
     )
 
     print(
-        f"{restaurants['food_style'].notna().mean():.1%}"
+        f"{restaurants['cuisine'].notna().mean():.1%}"
     )
 
     print(
-        "\nTop food styles:"
+        "\nCuisine detail coverage:"
+    )
+
+    print(
+        f"{restaurants['cuisine_detail'].notna().mean():.1%}"
+    )
+
+    print(
+        "\nSpecialty coverage:"
+    )
+
+    print(
+        f"{restaurants['specialty'].notna().mean():.1%}"
+    )
+
+    print(
+        "\nSpecialty detail coverage:"
+    )
+
+    print(
+        f"{restaurants['specialty_detail'].notna().mean():.1%}"
+    )
+
+    print(
+        "\nTop cuisines:"
     )
 
     print(
         restaurants[
-            "food_style"
+            "cuisine"
+        ].value_counts()
+        .head(25)
+    )
+
+    print(
+        "\nTop specialties:"
+    )
+
+    print(
+        restaurants[
+            "specialty"
         ].value_counts()
         .head(25)
     )
